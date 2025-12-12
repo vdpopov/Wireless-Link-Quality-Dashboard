@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wifi-monitor"
+version = "0.1.0"
+description = "Linux desktop app to graph Wi-Fi link metrics and ping latency over time."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Vadim P."}]
+
+dependencies = [
+  "numpy>=1.22",
+  "PyQt5>=5.15",
+  "pyqtgraph>=0.13",
+]
+
+[project.optional-dependencies]
+opengl = [
+  "PyOpenGL>=3.1",
+  "PyOpenGL_accelerate>=3.1",
+]
+
+[project.scripts]
+wifi-monitor = "wifi_monitor.main:main"
+
+[tool.setuptools]
+packages = ["wifi_monitor", "wifi_monitor.controllers", "wifi_monitor.widgets", "wifi_monitor.windows"]
