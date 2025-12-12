@@ -52,12 +52,15 @@ def detect_gpu_capability():
         return False, "None", f"OpenGL test failed: {str(e)}"
 
 
-def configure_pyqtgraph():
+def configure_pyqtgraph(force_no_gpu: bool = False):
     pg.setConfigOptions(antialias=True)
     pg.setConfigOption("background", "w")
     pg.setConfigOption("foreground", "k")
 
-    has_gpu, gpu_name, gpu_reason = detect_gpu_capability()
+    if force_no_gpu:
+        has_gpu, gpu_name, gpu_reason = False, "None", "disabled by --no-gpu"
+    else:
+        has_gpu, gpu_name, gpu_reason = detect_gpu_capability()
 
     if has_gpu:
         print(f"✅ GPU detected: {gpu_name}")

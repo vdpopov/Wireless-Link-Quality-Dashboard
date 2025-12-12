@@ -7,6 +7,43 @@ from .. import constants
 from ..data import smooth_data
 
 
+def _downsample_minmax(time_arr: np.ndarray, y_arr: np.ndarray, step: int):
+    """Downsample by emitting min+max per bucket (peak-preserving)."""
+    n = len(time_arr)
+    if step <= 1 or n <= 2:
+        return time_arr, y_arr
+
+    out_t = []
+    out_y = []
+
+    end = (n // step) * step
+    for i in range(0, end, step):
+        t_chunk = time_arr[i : i + step]
+        y_chunk = y_arr[i : i + step]
+
+        if np.all(~np.isfinite(y_chunk)):
+            mid = len(t_chunk) // 2
+            out_t.append(t_chunk[mid])
+            out_y.append(np.nan)
+            continue
+
+        imin = int(np.nanargmin(y_chunk))
+        imax = int(np.nanargmax(y_chunk))
+
+        if imin <= imax:
+            out_t.extend([t_chunk[imin], t_chunk[imax]])
+            out_y.extend([y_chunk[imin], y_chunk[imax]])
+        else:
+            out_t.extend([t_chunk[imax], t_chunk[imin]])
+            out_y.extend([y_chunk[imax], y_chunk[imin]])
+
+    if end < n:
+        out_t.extend(time_arr[end:])
+        out_y.extend(y_arr[end:])
+
+    return np.asarray(out_t), np.asarray(out_y)
+
+
 def draw_failure_regions(window, plot_idx, failure_list, start_idx, x_range=None):
     plots = [window.signal_plot, window.ping_plot, window.rate_plot, window.bw_plot]
     plot = plots[plot_idx]
@@ -131,12 +168,9 @@ def full_redraw(window):
     vis_tx = constants.tx_rate_data[start_idx:]
     vis_bw = constants.bandwidth_data[start_idx:]
 
-    if constants.current_window is None or constants.current_window >= 14400:
-        max_points = 600
-    elif constants.current_window >= 3600:
-        max_points = 1000
-    else:
-        max_points = 2000
+    points_per_pixel = 1.2
+    plot_px = max(1, window.signal_plot.viewport().width())
+    max_points = max(200, int(plot_px * points_per_pixel))
 
     downsampled = False
     downsample_step = 1
@@ -155,18 +189,18 @@ def full_redraw(window):
         tail_tx = vis_tx[-tail_points:]
         tail_bw = vis_bw[-tail_points:]
 
-        if constants.current_window is not None:
-            step = max(1, constants.current_window // max_points)
-        else:
-            raw_step = len(hist_time) // max_points
-            step = 2 ** int(np.log2(max(1, raw_step))) if raw_step > 0 else 1
+        step = max(1, int(np.ceil(len(hist_time) / max(1, max_points // 2))))
 
-        offset = (step - (start_idx % step)) % step
-        hist_time = hist_time[offset::step]
-        hist_signal = hist_signal[offset::step]
-        hist_rx = hist_rx[offset::step]
-        hist_tx = hist_tx[offset::step]
-        hist_bw = hist_bw[offset::step]
+        hist_time_ds, hist_signal_ds = _downsample_minmax(hist_time, hist_signal, step)
+        _, hist_rx_ds = _downsample_minmax(hist_time, hist_rx, step)
+        _, hist_tx_ds = _downsample_minmax(hist_time, hist_tx, step)
+        _, hist_bw_ds = _downsample_minmax(hist_time, hist_bw, step)
+
+        hist_time = hist_time_ds
+        hist_signal = hist_signal_ds
+        hist_rx = hist_rx_ds
+        hist_tx = hist_tx_ds
+        hist_bw = hist_bw_ds
 
         vis_time = np.concatenate([hist_time, tail_time])
         vis_signal = np.concatenate([hist_signal, tail_signal])
@@ -176,6 +210,7 @@ def full_redraw(window):
 
         downsampled = True
         downsample_step = step
+        tail_time_for_downsample = tail_time
 
     if not downsampled:
         vis_signal = smooth_data(vis_signal, alpha=0.3)
@@ -202,14 +237,50 @@ def full_redraw(window):
                 if downsampled and len(vis_ping) > tail_points:
                     hist_ping = vis_ping[:-tail_points]
                     tail_ping = vis_ping[-tail_points:]
-                    offset = (downsample_step - (start_idx % downsample_step)) % downsample_step
-                    hist_ping = hist_ping[offset::downsample_step]
-                    vis_ping = np.concatenate([hist_ping, tail_ping])
 
-                min_len = min(len(vis_time), len(vis_ping))
+                    # Use the original timebase for ping; `vis_time` may already be
+                    # min/max downsampled for other series.
+                    hist_ping_time = constants.time_data[start_idx:][:-tail_points]
+
+                    # Make ping visually consistent with other plots: one value per bucket
+                    # (mean) + light smoothing, instead of peak min/max envelope.
+                    # Ping is visually sensitive; use a smaller bucket (more points)
+                    # than the other plots for better perceived consistency.
+                    bucket = max(1, downsample_step // 2)
+                    n = (len(hist_ping_time) // bucket) * bucket
+                    if n > 0:
+                        t_mat = hist_ping_time[:n].reshape(-1, bucket)
+                        y_mat = hist_ping[:n].reshape(-1, bucket)
+                        hist_ping_time_ds = t_mat[:, bucket // 2]
+                        finite = np.isfinite(y_mat)
+                        sums = np.where(finite, y_mat, 0.0).sum(axis=1)
+                        counts = finite.sum(axis=1)
+                        hist_ping_ds = np.divide(
+                            sums,
+                            counts,
+                            out=np.full_like(sums, np.nan, dtype=float),
+                            where=counts > 0,
+                        )
+                    else:
+                        hist_ping_time_ds = np.array([], dtype=float)
+                        hist_ping_ds = np.array([], dtype=float)
+
+                    hist_ping_ds = smooth_data(hist_ping_ds, alpha=0.3)
+
+                    # Keep any remainder (partial bucket) at full resolution.
+                    if n < len(hist_ping_time):
+                        hist_ping_time_ds = np.concatenate([hist_ping_time_ds, hist_ping_time[n:]])
+                        hist_ping_ds = np.concatenate([hist_ping_ds, hist_ping[n:]])
+
+                    vis_ping_time = np.concatenate([hist_ping_time_ds, tail_time_for_downsample])
+                    vis_ping = np.concatenate([hist_ping_ds, tail_ping])
+                else:
+                    vis_ping_time = vis_time
+
+                min_len = min(len(vis_ping_time), len(vis_ping))
 
                 window.ping_curves[i].setData(
-                    vis_time[:min_len],
+                    vis_ping_time[:min_len],
                     vis_ping[:min_len],
                     connect="finite",
                 )
@@ -253,12 +324,9 @@ def draw_charts(window):
         start_idx = np.searchsorted(constants.time_data, cutoff, side="left")
 
     vis_len = len(constants.time_data) - start_idx
-    if constants.current_window is None or constants.current_window >= 14400:
-        max_points = 600
-    elif constants.current_window >= 3600:
-        max_points = 1000
-    else:
-        max_points = 2000
+    points_per_pixel = 1.2
+    plot_px = max(1, window.signal_plot.viewport().width())
+    max_points = max(200, int(plot_px * points_per_pixel))
 
     if vis_len <= max_points and not window.is_zoomed:
         new_start = window.last_drawn_index

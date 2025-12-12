@@ -82,7 +82,7 @@ class WifiMonitor(QMainWindow):
         self.signal_plot.wheelEvent = lambda evt: None
         self.signal_plot.hideButtons()
         self.signal_plot.setClipToView(True)
-        self.signal_plot.setDownsampling(auto=True, mode="peak")
+        self.signal_plot.setDownsampling(auto=False)
         layout.addWidget(self.signal_plot)
 
         build_ping_bar(self, layout)
@@ -98,7 +98,7 @@ class WifiMonitor(QMainWindow):
         self.ping_plot.wheelEvent = lambda evt: None
         self.ping_plot.hideButtons()
         self.ping_plot.setClipToView(True)
-        self.ping_plot.setDownsampling(auto=True, mode="peak")
+        self.ping_plot.setDownsampling(auto=False)
         layout.addWidget(self.ping_plot)
 
         self.rate_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
@@ -121,7 +121,7 @@ class WifiMonitor(QMainWindow):
         self.rate_plot.wheelEvent = lambda evt: None
         self.rate_plot.hideButtons()
         self.rate_plot.setClipToView(True)
-        self.rate_plot.setDownsampling(auto=True, mode="peak")
+        self.rate_plot.setDownsampling(auto=False)
         layout.addWidget(self.rate_plot)
 
         self.bw_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
@@ -138,7 +138,7 @@ class WifiMonitor(QMainWindow):
         self.bw_plot.wheelEvent = lambda evt: None
         self.bw_plot.hideButtons()
         self.bw_plot.setClipToView(True)
-        self.bw_plot.setDownsampling(auto=True, mode="peak")
+        self.bw_plot.setDownsampling(auto=False)
         layout.addWidget(self.bw_plot)
 
         self.ping_plot.setXLink(self.signal_plot)
