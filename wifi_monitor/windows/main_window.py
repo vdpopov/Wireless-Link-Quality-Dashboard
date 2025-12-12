@@ -229,7 +229,12 @@ class WifiMonitor(QMainWindow):
             btn.setChecked(l == label)
         self.needs_full_redraw = True
         self.last_drawn_index = 0
-        self.reset_zoom()
+
+        # Reset zoom state, and trigger redraw on the next Qt event-loop turn.
+        # This keeps the UI responsive while still feeling immediate.
+        self.is_zoomed = False
+        self.reset_btn.hide()
+        QTimer.singleShot(0, self.draw_charts)
 
     def reset_zoom(self):
         self.is_zoomed = False

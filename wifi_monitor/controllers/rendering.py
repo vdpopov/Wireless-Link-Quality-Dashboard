@@ -8,7 +8,11 @@ from ..data import smooth_data
 
 
 def _downsample_minmax(time_arr: np.ndarray, y_arr: np.ndarray, step: int):
-    """Downsample by emitting min+max per bucket (peak-preserving)."""
+    """Downsample by emitting min+max per bucket (peak-preserving).
+
+    NOTE: This function buckets by index (0..n). For sliding windows, bucket
+    boundaries can move as the window cutoff shifts.
+    """
     n = len(time_arr)
     if step <= 1 or n <= 2:
         return time_arr, y_arr
@@ -40,6 +44,53 @@ def _downsample_minmax(time_arr: np.ndarray, y_arr: np.ndarray, step: int):
     if end < n:
         out_t.extend(time_arr[end:])
         out_y.extend(y_arr[end:])
+
+    return np.asarray(out_t), np.asarray(out_y)
+
+
+def _downsample_minmax_timebucket(time_arr: np.ndarray, y_arr: np.ndarray, step: int, t0: float, dt: float):
+    """Stable min/max downsampling using absolute-time buckets.
+
+    Buckets are aligned to (t0 + k*step*dt), so a sliding cutoff does not move
+    bucket boundaries and deep history stays visually stable.
+    """
+    n = len(time_arr)
+    if step <= 1 or n <= 2:
+        return time_arr, y_arr
+
+    dt = max(float(dt), 1e-6)
+    bucket = step * dt
+
+    # Bucket index per sample.
+    idx = np.floor((time_arr - t0) / bucket).astype(np.int64)
+
+    out_t = []
+    out_y = []
+
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and idx[j] == idx[i]:
+            j += 1
+
+        t_chunk = time_arr[i:j]
+        y_chunk = y_arr[i:j]
+
+        if np.all(~np.isfinite(y_chunk)):
+            mid = len(t_chunk) // 2
+            out_t.append(t_chunk[mid])
+            out_y.append(np.nan)
+        else:
+            imin = int(np.nanargmin(y_chunk))
+            imax = int(np.nanargmax(y_chunk))
+            if imin <= imax:
+                out_t.extend([t_chunk[imin], t_chunk[imax]])
+                out_y.extend([y_chunk[imin], y_chunk[imax]])
+            else:
+                out_t.extend([t_chunk[imax], t_chunk[imin]])
+                out_y.extend([y_chunk[imax], y_chunk[imin]])
+
+        i = j
 
     return np.asarray(out_t), np.asarray(out_y)
 
@@ -156,10 +207,13 @@ def full_redraw(window):
     if len(constants.time_data) == 0:
         return
 
+    # Use the same notion of "now" throughout this redraw.
+    now = time.time()
+
     if constants.current_window is None:
         start_idx = 0
     else:
-        cutoff = time.time() - constants.current_window
+        cutoff = now - constants.current_window
         start_idx = np.searchsorted(constants.time_data, cutoff, side="left")
 
     vis_time = constants.time_data[start_idx:]
@@ -176,12 +230,18 @@ def full_redraw(window):
     downsample_step = 1
     tail_points = 60
 
+    # Cache downsampled history so long windows (e.g. 4h) don't rerender the entire
+    # history every tick. Only recompute when the downsampling parameters change or
+    # enough new points accumulate to add at least one full bucket.
+    if not hasattr(window, "_ds_cache"):
+        window._ds_cache = None
+
     if len(vis_time) > max_points + tail_points:
-        hist_time = vis_time[:-tail_points]
-        hist_signal = vis_signal[:-tail_points]
-        hist_rx = vis_rx[:-tail_points]
-        hist_tx = vis_tx[:-tail_points]
-        hist_bw = vis_bw[:-tail_points]
+        hist_time_raw = vis_time[:-tail_points]
+        hist_signal_raw = vis_signal[:-tail_points]
+        hist_rx_raw = vis_rx[:-tail_points]
+        hist_tx_raw = vis_tx[:-tail_points]
+        hist_bw_raw = vis_bw[:-tail_points]
 
         tail_time = vis_time[-tail_points:]
         tail_signal = vis_signal[-tail_points:]
@@ -189,18 +249,53 @@ def full_redraw(window):
         tail_tx = vis_tx[-tail_points:]
         tail_bw = vis_bw[-tail_points:]
 
-        step = max(1, int(np.ceil(len(hist_time) / max(1, max_points // 2))))
+        step = max(1, int(np.ceil(len(hist_time_raw) / max(1, max_points // 2))))
 
-        hist_time_ds, hist_signal_ds = _downsample_minmax(hist_time, hist_signal, step)
-        _, hist_rx_ds = _downsample_minmax(hist_time, hist_rx, step)
-        _, hist_tx_ds = _downsample_minmax(hist_time, hist_tx, step)
-        _, hist_bw_ds = _downsample_minmax(hist_time, hist_bw, step)
+        # Stable bucket alignment: downsample history using absolute-time buckets
+        # so deep history doesn't reshuffle as the 4h cutoff slides.
+        dt = float(np.median(np.diff(constants.time_data))) if len(constants.time_data) > 2 else 1.0
+        t0 = constants.time_data[0] if len(constants.time_data) else 0.0
 
-        hist_time = hist_time_ds
-        hist_signal = hist_signal_ds
-        hist_rx = hist_rx_ds
-        hist_tx = hist_tx_ds
-        hist_bw = hist_bw_ds
+        # Cache should not depend on start_idx (which changes every tick for sliding
+        # windows); downsampling is stable in absolute time.
+        cache_key = (step, tail_points, max_points, plot_px, float(t0), float(dt))
+        cache = window._ds_cache
+
+        can_reuse = (
+            cache is not None
+            and cache.get("key") == cache_key
+            and cache.get("hist_raw_len", 0) <= len(hist_time_raw)
+        )
+
+        if can_reuse and (len(hist_time_raw) - cache["hist_raw_len"]) < step:
+            hist_time = cache["hist_time"]
+            hist_signal = cache["hist_signal"]
+            hist_rx = cache["hist_rx"]
+            hist_tx = cache["hist_tx"]
+            hist_bw = cache["hist_bw"]
+        else:
+            hist_time, hist_signal = _downsample_minmax_timebucket(hist_time_raw, hist_signal_raw, step, t0=t0, dt=dt)
+            hist_time_rx, hist_rx = _downsample_minmax_timebucket(hist_time_raw, hist_rx_raw, step, t0=t0, dt=dt)
+            hist_time_tx, hist_tx = _downsample_minmax_timebucket(hist_time_raw, hist_tx_raw, step, t0=t0, dt=dt)
+            hist_time_bw, hist_bw = _downsample_minmax_timebucket(hist_time_raw, hist_bw_raw, step, t0=t0, dt=dt)
+
+            # Safety: ensure every series uses the same X array length.
+            min_len = min(len(hist_time), len(hist_signal), len(hist_rx), len(hist_tx), len(hist_bw))
+            hist_time = hist_time[:min_len]
+            hist_signal = hist_signal[:min_len]
+            hist_rx = hist_rx[:min_len]
+            hist_tx = hist_tx[:min_len]
+            hist_bw = hist_bw[:min_len]
+
+            window._ds_cache = {
+                "key": cache_key,
+                "hist_raw_len": len(hist_time_raw),
+                "hist_time": hist_time,
+                "hist_signal": hist_signal,
+                "hist_rx": hist_rx,
+                "hist_tx": hist_tx,
+                "hist_bw": hist_bw,
+            }
 
         vis_time = np.concatenate([hist_time, tail_time])
         vis_signal = np.concatenate([hist_signal, tail_signal])
@@ -242,35 +337,44 @@ def full_redraw(window):
                     # min/max downsampled for other series.
                     hist_ping_time = constants.time_data[start_idx:][:-tail_points]
 
-                    # Make ping visually consistent with other plots: one value per bucket
-                    # (mean) + light smoothing, instead of peak min/max envelope.
-                    # Ping is visually sensitive; use a smaller bucket (more points)
-                    # than the other plots for better perceived consistency.
+                    # Ping downsampling must also be stable under sliding windows.
+                    # Use absolute-time buckets (same as other plots), but aggregate
+                    # with mean per bucket for ping.
                     bucket = max(1, downsample_step // 2)
-                    n = (len(hist_ping_time) // bucket) * bucket
-                    if n > 0:
-                        t_mat = hist_ping_time[:n].reshape(-1, bucket)
-                        y_mat = hist_ping[:n].reshape(-1, bucket)
-                        hist_ping_time_ds = t_mat[:, bucket // 2]
-                        finite = np.isfinite(y_mat)
-                        sums = np.where(finite, y_mat, 0.0).sum(axis=1)
-                        counts = finite.sum(axis=1)
-                        hist_ping_ds = np.divide(
-                            sums,
-                            counts,
-                            out=np.full_like(sums, np.nan, dtype=float),
-                            where=counts > 0,
-                        )
+
+                    dt = float(np.median(np.diff(constants.time_data))) if len(constants.time_data) > 2 else 1.0
+                    t0 = constants.time_data[0] if len(constants.time_data) else 0.0
+                    dt = max(float(dt), 1e-6)
+                    bucket_period = bucket * dt
+
+                    if len(hist_ping_time) > 0:
+                        bidx = np.floor((hist_ping_time - t0) / bucket_period).astype(np.int64)
+                        # Find bucket boundaries
+                        changes = np.nonzero(np.diff(bidx))[0] + 1
+                        starts = np.concatenate([[0], changes])
+                        ends = np.concatenate([changes, [len(bidx)]])
+
+                        out_t = []
+                        out_y = []
+                        for s, e in zip(starts, ends):
+                            t_chunk = hist_ping_time[s:e]
+                            y_chunk = hist_ping[s:e]
+                            mid = len(t_chunk) // 2
+                            out_t.append(t_chunk[mid])
+
+                            finite = np.isfinite(y_chunk)
+                            if not np.any(finite):
+                                out_y.append(np.nan)
+                            else:
+                                out_y.append(float(np.nanmean(y_chunk[finite])))
+
+                        hist_ping_time_ds = np.asarray(out_t)
+                        hist_ping_ds = np.asarray(out_y)
                     else:
                         hist_ping_time_ds = np.array([], dtype=float)
                         hist_ping_ds = np.array([], dtype=float)
 
                     hist_ping_ds = smooth_data(hist_ping_ds, alpha=0.3)
-
-                    # Keep any remainder (partial bucket) at full resolution.
-                    if n < len(hist_ping_time):
-                        hist_ping_time_ds = np.concatenate([hist_ping_time_ds, hist_ping_time[n:]])
-                        hist_ping_ds = np.concatenate([hist_ping_ds, hist_ping[n:]])
 
                     vis_ping_time = np.concatenate([hist_ping_time_ds, tail_time_for_downsample])
                     vis_ping = np.concatenate([hist_ping_ds, tail_ping])
@@ -309,7 +413,11 @@ def draw_charts(window):
     if len(constants.time_data) == 0:
         return
 
-    if window.needs_full_redraw or window.is_zoomed:
+    # When zoomed, avoid recomputing the full downsampled history every tick.
+    # It's enough to append/update the newest points; the view is fixed by the zoom.
+    if window.is_zoomed:
+        window.needs_full_redraw = False
+    elif window.needs_full_redraw:
         full_redraw(window)
         window.needs_full_redraw = False
         return
