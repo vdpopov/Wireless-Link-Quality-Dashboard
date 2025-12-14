@@ -327,6 +327,14 @@ def full_redraw(window):
             hist_rx = cache["hist_rx"]
             hist_tx = cache["hist_tx"]
             hist_bw = cache["hist_bw"]
+            # Extend tail to include points between cached history end and current tail start
+            # to avoid a gap when cache is reused but new points accumulated.
+            cached_hist_len = cache["hist_raw_len"]
+            tail_time = vis_time[cached_hist_len:]
+            tail_signal = vis_signal[cached_hist_len:]
+            tail_rx = vis_rx[cached_hist_len:]
+            tail_tx = vis_tx[cached_hist_len:]
+            tail_bw = vis_bw[cached_hist_len:]
         else:
             # Downsample all series together using a shared time grid to ensure
             # all Y arrays stay aligned with the same X timestamps.
@@ -357,6 +365,12 @@ def full_redraw(window):
         downsampled = True
         downsample_step = step
         tail_time_for_downsample = tail_time
+        # Track where tail starts in raw vis_* arrays (before downsampling) for ping alignment
+        # When cache reused: cached_hist_len, otherwise: len(hist_time_raw) (original split point)
+        if can_reuse and (len(hist_time_raw) - cache["hist_raw_len"]) < step:
+            raw_tail_start = cache["hist_raw_len"]
+        else:
+            raw_tail_start = len(hist_time_raw)
 
     if not downsampled:
         vis_signal = smooth_data(vis_signal, alpha=0.3)
@@ -380,13 +394,13 @@ def full_redraw(window):
             vis_ping = host_info["data"][start_idx:]
 
             if len(vis_ping) > 0:
-                if downsampled and len(vis_ping) > tail_points:
-                    hist_ping = vis_ping[:-tail_points]
-                    tail_ping = vis_ping[-tail_points:]
+                if downsampled and len(vis_ping) > raw_tail_start:
+                    hist_ping = vis_ping[:raw_tail_start]
+                    tail_ping = vis_ping[raw_tail_start:]
 
                     # Use the original timebase for ping; `vis_time` may already be
                     # min/max downsampled for other series.
-                    hist_ping_time = constants.time_data[start_idx:][:-tail_points]
+                    hist_ping_time = constants.time_data[start_idx:][:raw_tail_start]
 
                     # Ping downsampling must also be stable under sliding windows.
                     # Use absolute-time buckets (same as other plots), but aggregate
@@ -444,7 +458,16 @@ def full_redraw(window):
         plot.enableAutoRange(axis="y")
 
     if not window.is_zoomed and len(vis_time) > 0:
-        window.signal_plot.setXRange(vis_time[0], vis_time[-1], padding=0.02)
+        # Use the actual window boundaries (cutoff to now) rather than
+        # data timestamps to avoid empty gaps at the left edge caused by
+        # bucket alignment in downsampling.
+        if constants.current_window is not None:
+            x_start = now - constants.current_window
+            x_end = now
+        else:
+            x_start = vis_time[0]
+            x_end = vis_time[-1]
+        window.signal_plot.setXRange(x_start, x_end, padding=0.02)
 
     for plot in [window.signal_plot, window.ping_plot, window.rate_plot, window.bw_plot]:
         plot.setUpdatesEnabled(True)
@@ -574,7 +597,15 @@ def draw_charts(window):
                         )
 
             if len(all_time) > 0:
-                window.signal_plot.setXRange(all_time[0], all_time[-1], padding=0.02)
+                # Use actual window boundaries for consistent X-range
+                if constants.current_window is not None:
+                    now = time.time()
+                    x_start = now - constants.current_window
+                    x_end = now
+                else:
+                    x_start = all_time[0]
+                    x_end = all_time[-1]
+                window.signal_plot.setXRange(x_start, x_end, padding=0.02)
 
             for plot in [window.signal_plot, window.ping_plot, window.rate_plot, window.bw_plot]:
                 plot.setUpdatesEnabled(True)
