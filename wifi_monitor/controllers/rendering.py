@@ -95,6 +95,60 @@ def _downsample_minmax_timebucket(time_arr: np.ndarray, y_arr: np.ndarray, step:
     return np.asarray(out_t), np.asarray(out_y)
 
 
+def _downsample_multi_timebucket(time_arr: np.ndarray, y_arrays: list, step: int, t0: float, dt: float):
+    """Downsample multiple Y series using a shared time grid.
+
+    Returns (out_time, [out_y1, out_y2, ...]) where all arrays have the same length.
+    For each bucket, emits two points (at min/max times based on the FIRST y array).
+    Other y arrays are sampled at the same indices.
+    """
+    n = len(time_arr)
+    if step <= 1 or n <= 2:
+        return time_arr, y_arrays
+
+    dt = max(float(dt), 1e-6)
+    bucket = step * dt
+
+    idx = np.floor((time_arr - t0) / bucket).astype(np.int64)
+
+    out_t = []
+    out_ys = [[] for _ in y_arrays]
+
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and idx[j] == idx[i]:
+            j += 1
+
+        t_chunk = time_arr[i:j]
+        # Use the first Y array (signal) to determine which indices to sample
+        y_primary = y_arrays[0][i:j]
+
+        if np.all(~np.isfinite(y_primary)):
+            # All NaN in primary - emit single midpoint for all series
+            mid = len(t_chunk) // 2
+            out_t.append(t_chunk[mid])
+            for k, y_arr in enumerate(y_arrays):
+                out_ys[k].append(y_arr[i:j][mid])
+        else:
+            imin = int(np.nanargmin(y_primary))
+            imax = int(np.nanargmax(y_primary))
+            if imin <= imax:
+                out_t.extend([t_chunk[imin], t_chunk[imax]])
+                for k, y_arr in enumerate(y_arrays):
+                    y_chunk = y_arr[i:j]
+                    out_ys[k].extend([y_chunk[imin], y_chunk[imax]])
+            else:
+                out_t.extend([t_chunk[imax], t_chunk[imin]])
+                for k, y_arr in enumerate(y_arrays):
+                    y_chunk = y_arr[i:j]
+                    out_ys[k].extend([y_chunk[imax], y_chunk[imin]])
+
+        i = j
+
+    return np.asarray(out_t), [np.asarray(y) for y in out_ys]
+
+
 def draw_failure_regions(window, plot_idx, failure_list, start_idx, x_range=None):
     plots = [window.signal_plot, window.ping_plot, window.rate_plot, window.bw_plot]
     plot = plots[plot_idx]
@@ -274,18 +328,15 @@ def full_redraw(window):
             hist_tx = cache["hist_tx"]
             hist_bw = cache["hist_bw"]
         else:
-            hist_time, hist_signal = _downsample_minmax_timebucket(hist_time_raw, hist_signal_raw, step, t0=t0, dt=dt)
-            hist_time_rx, hist_rx = _downsample_minmax_timebucket(hist_time_raw, hist_rx_raw, step, t0=t0, dt=dt)
-            hist_time_tx, hist_tx = _downsample_minmax_timebucket(hist_time_raw, hist_tx_raw, step, t0=t0, dt=dt)
-            hist_time_bw, hist_bw = _downsample_minmax_timebucket(hist_time_raw, hist_bw_raw, step, t0=t0, dt=dt)
-
-            # Safety: ensure every series uses the same X array length.
-            min_len = min(len(hist_time), len(hist_signal), len(hist_rx), len(hist_tx), len(hist_bw))
-            hist_time = hist_time[:min_len]
-            hist_signal = hist_signal[:min_len]
-            hist_rx = hist_rx[:min_len]
-            hist_tx = hist_tx[:min_len]
-            hist_bw = hist_bw[:min_len]
+            # Downsample all series together using a shared time grid to ensure
+            # all Y arrays stay aligned with the same X timestamps.
+            hist_time, (hist_signal, hist_rx, hist_tx, hist_bw) = _downsample_multi_timebucket(
+                hist_time_raw,
+                [hist_signal_raw, hist_rx_raw, hist_tx_raw, hist_bw_raw],
+                step,
+                t0=t0,
+                dt=dt,
+            )
 
             window._ds_cache = {
                 "key": cache_key,
