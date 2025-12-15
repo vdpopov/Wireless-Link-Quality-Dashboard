@@ -310,31 +310,46 @@ def full_redraw(window):
         dt = float(np.median(np.diff(constants.time_data))) if len(constants.time_data) > 2 else 1.0
         t0 = constants.time_data[0] if len(constants.time_data) else 0.0
 
-        # Cache should not depend on start_idx (which changes every tick for sliding
-        # windows); downsampling is stable in absolute time.
+        # Cache key should NOT include start_idx/vis_start_time because
+        # absolute-time bucketed downsampling produces stable results regardless
+        # of where the visible window starts. But we must track the actual END
+        # timestamp of the cached history to correctly compute the tail.
         cache_key = (step, tail_points, max_points, plot_px, float(t0), float(dt))
         cache = window._ds_cache
 
         can_reuse = (
-            cache is not None
+            len(hist_time_raw) > 0
+            and cache is not None
             and cache.get("key") == cache_key
-            and cache.get("hist_raw_len", 0) <= len(hist_time_raw)
+            and cache.get("hist_end_time", 0) <= hist_time_raw[-1]
         )
 
-        if can_reuse and (len(hist_time_raw) - cache["hist_raw_len"]) < step:
-            hist_time = cache["hist_time"]
-            hist_signal = cache["hist_signal"]
-            hist_rx = cache["hist_rx"]
-            hist_tx = cache["hist_tx"]
-            hist_bw = cache["hist_bw"]
-            # Extend tail to include points between cached history end and current tail start
-            # to avoid a gap when cache is reused but new points accumulated.
-            cached_hist_len = cache["hist_raw_len"]
-            tail_time = vis_time[cached_hist_len:]
-            tail_signal = vis_signal[cached_hist_len:]
-            tail_rx = vis_rx[cached_hist_len:]
-            tail_tx = vis_tx[cached_hist_len:]
-            tail_bw = vis_bw[cached_hist_len:]
+        if can_reuse:
+            cached_hist_time = cache["hist_time"]
+            cached_hist_signal = cache["hist_signal"]
+            cached_hist_rx = cache["hist_rx"]
+            cached_hist_tx = cache["hist_tx"]
+            cached_hist_bw = cache["hist_bw"]
+            cached_end_time = cache["hist_end_time"]
+
+            # Trim cached history to only include timestamps within current visible range.
+            # Some old cached data may have scrolled off the left edge.
+            vis_start = vis_time[0]
+            trim_idx = np.searchsorted(cached_hist_time, vis_start, side="left")
+            hist_time = cached_hist_time[trim_idx:]
+            hist_signal = cached_hist_signal[trim_idx:]
+            hist_rx = cached_hist_rx[trim_idx:]
+            hist_tx = cached_hist_tx[trim_idx:]
+            hist_bw = cached_hist_bw[trim_idx:]
+
+            # Find where to start the tail: first vis_time point after cached_end_time.
+            # This ensures no gap between cached history and tail.
+            tail_start_idx = np.searchsorted(vis_time, cached_end_time, side="right")
+            tail_time = vis_time[tail_start_idx:]
+            tail_signal = vis_signal[tail_start_idx:]
+            tail_rx = vis_rx[tail_start_idx:]
+            tail_tx = vis_tx[tail_start_idx:]
+            tail_bw = vis_bw[tail_start_idx:]
         else:
             # Downsample all series together using a shared time grid to ensure
             # all Y arrays stay aligned with the same X timestamps.
@@ -348,7 +363,7 @@ def full_redraw(window):
 
             window._ds_cache = {
                 "key": cache_key,
-                "hist_raw_len": len(hist_time_raw),
+                "hist_end_time": float(hist_time_raw[-1]) if len(hist_time_raw) > 0 else 0.0,
                 "hist_time": hist_time,
                 "hist_signal": hist_signal,
                 "hist_rx": hist_rx,
@@ -365,10 +380,11 @@ def full_redraw(window):
         downsampled = True
         downsample_step = step
         tail_time_for_downsample = tail_time
-        # Track where tail starts in raw vis_* arrays (before downsampling) for ping alignment
-        # When cache reused: cached_hist_len, otherwise: len(hist_time_raw) (original split point)
-        if can_reuse and (len(hist_time_raw) - cache["hist_raw_len"]) < step:
-            raw_tail_start = cache["hist_raw_len"]
+        # Track where tail starts in raw vis_* arrays (before downsampling) for ping alignment.
+        # When cache reused: use tail_start_idx computed from timestamp search.
+        # When not reused: use len(hist_time_raw) (original split point).
+        if can_reuse:
+            raw_tail_start = tail_start_idx
         else:
             raw_tail_start = len(hist_time_raw)
 
