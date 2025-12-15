@@ -440,9 +440,10 @@ def full_redraw(window):
                         hist_ping_ds = np.array([], dtype=float)
 
                     hist_ping_ds = smooth_data(hist_ping_ds, alpha=0.3)
+                    tail_ping_smooth = smooth_data(tail_ping, alpha=0.3)
 
                     vis_ping_time = np.concatenate([hist_ping_time_ds, tail_time_for_downsample])
-                    vis_ping = np.concatenate([hist_ping_ds, tail_ping])
+                    vis_ping = np.concatenate([hist_ping_ds, tail_ping_smooth])
                 else:
                     vis_ping_time = vis_time
 
