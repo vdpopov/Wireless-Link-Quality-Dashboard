@@ -149,6 +149,26 @@ def _downsample_multi_timebucket(time_arr: np.ndarray, y_arrays: list, step: int
     return np.asarray(out_t), [np.asarray(y) for y in out_ys]
 
 
+def _get_min_failure_cluster_size():
+    """Return minimum consecutive failures required to show a red region.
+
+    For longer intervals, require more failures to avoid tiny flickering regions.
+    """
+    win = constants.current_window
+    if win is None:  # ∞
+        return 100
+    elif win >= 86400:  # 1D
+        return 50
+    elif win >= 14400:  # 4h
+        return 25
+    elif win >= 3600:  # 60m
+        return 15
+    elif win >= 1800:  # 30m
+        return 5
+    else:  # 10m or less
+        return 1
+
+
 def draw_failure_regions(window, plot_idx, failure_list, start_idx, x_range=None):
     plots = [window.signal_plot, window.ping_plot, window.rate_plot, window.bw_plot]
     plot = plots[plot_idx]
@@ -189,8 +209,14 @@ def draw_failure_regions(window, plot_idx, failure_list, start_idx, x_range=None
     starts = np.where(diff == 1)[0]
     ends = np.where(diff == -1)[0]
 
+    min_cluster = _get_min_failure_cluster_size()
+
     pixel_regions = []
     for s, e in zip(starts, ends):
+        # Skip clusters smaller than minimum threshold for this interval
+        cluster_size = e - s
+        if cluster_size < min_cluster:
+            continue
         global_start = vis_start + s
         global_end = vis_start + e - 1
 
