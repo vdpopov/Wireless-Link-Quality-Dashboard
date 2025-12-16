@@ -47,3 +47,31 @@ def get_link_info():
         return signal, rx_rate, tx_rate, rx_bw or tx_bw
     except Exception:
         return None, None, None, None
+
+
+def get_current_frequency():
+    """Get current connection frequency in MHz. Returns None if not connected."""
+    try:
+        result = subprocess.check_output(
+            ["iw", "dev", constants.INTERFACE, "link"], text=True
+        )
+        freq_match = re.search(r"freq: ([\d.]+)", result)
+        if freq_match:
+            return float(freq_match.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def get_current_band():
+    """
+    Detect if connected to 2.4GHz or 5GHz.
+    Returns '2.4' or '5' or None if not connected.
+    """
+    freq = get_current_frequency()
+    if freq is None:
+        return None
+    if freq < 3000:  # 2.4GHz is 2412-2484 MHz
+        return "2.4"
+    else:  # 5GHz is 5180-5825 MHz
+        return "5"

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 # Time window presets (label -> seconds)
@@ -34,3 +36,7 @@ INTERFACE = None
 REFRESH_INTERVAL = DEFAULT_REFRESH_INTERVAL_MS
 
 ping_hosts = []
+
+# Heatmap settings
+HEATMAP_DAYS = 7
+SCAN_STORAGE_PATH = Path.home() / ".config" / "wifi-monitor" / "scans"

@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -18,6 +19,7 @@ from ..controllers import collection, interaction, rendering
 from ..overlays import FailureOverlay, HoverOverlay, SelectionOverlay
 from ..ping import remove_ping_host
 from ..plot_items import TimeAxisItem, setup_legend
+from ..widgets.heatmap import ChannelHeatmap
 from ..widgets.ping_bar import build_ping_bar, refresh_ping_host_buttons
 
 
@@ -69,6 +71,21 @@ class WifiMonitor(QMainWindow):
         top_bar.addStretch()
         layout.addLayout(top_bar)
 
+        # Create tab widget
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+
+        # Tab 0: Live Monitor
+        live_monitor = QWidget()
+        live_layout = QVBoxLayout(live_monitor)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(5)
+        self.tabs.addTab(live_monitor, "Live Monitor")
+
+        # Tab 1: Channel Heatmap
+        self.heatmap_widget = ChannelHeatmap()
+        self.tabs.addTab(self.heatmap_widget, "Channel Heatmap")
+
         self.signal_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.signal_plot.setMenuEnabled(False)
         self.signal_plot.setLabel("left", "dBm")
@@ -83,9 +100,9 @@ class WifiMonitor(QMainWindow):
         self.signal_plot.hideButtons()
         self.signal_plot.setClipToView(True)
         self.signal_plot.setDownsampling(auto=False)
-        layout.addWidget(self.signal_plot)
+        live_layout.addWidget(self.signal_plot)
 
-        build_ping_bar(self, layout)
+        build_ping_bar(self, live_layout)
 
         self.ping_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.ping_plot.setMenuEnabled(False)
@@ -99,7 +116,7 @@ class WifiMonitor(QMainWindow):
         self.ping_plot.hideButtons()
         self.ping_plot.setClipToView(True)
         self.ping_plot.setDownsampling(auto=False)
-        layout.addWidget(self.ping_plot)
+        live_layout.addWidget(self.ping_plot)
 
         self.rate_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.rate_plot.setMenuEnabled(False)
@@ -122,7 +139,7 @@ class WifiMonitor(QMainWindow):
         self.rate_plot.hideButtons()
         self.rate_plot.setClipToView(True)
         self.rate_plot.setDownsampling(auto=False)
-        layout.addWidget(self.rate_plot)
+        live_layout.addWidget(self.rate_plot)
 
         self.bw_plot = pg.PlotWidget(axisItems={"bottom": TimeAxisItem(orientation="bottom")})
         self.bw_plot.setMenuEnabled(False)
@@ -139,7 +156,7 @@ class WifiMonitor(QMainWindow):
         self.bw_plot.hideButtons()
         self.bw_plot.setClipToView(True)
         self.bw_plot.setDownsampling(auto=False)
-        layout.addWidget(self.bw_plot)
+        live_layout.addWidget(self.bw_plot)
 
         self.ping_plot.setXLink(self.signal_plot)
         self.rate_plot.setXLink(self.signal_plot)
