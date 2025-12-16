@@ -52,20 +52,56 @@ def detect_gpu_capability():
         return False, "None", f"OpenGL test failed: {str(e)}"
 
 
+def _detect_dark_mode():
+    """Detect if system is using dark mode."""
+    import os
+
+    # Method 1: Check GTK_THEME environment variable
+    gtk_theme = os.environ.get("GTK_THEME", "").lower()
+    if "dark" in gtk_theme:
+        return True
+
+    # Method 2: Check GNOME/GTK settings via gsettings
+    try:
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+            capture_output=True, text=True, timeout=2
+        )
+        if "dark" in result.stdout.lower():
+            return True
+    except Exception:
+        pass
+
+    # Method 3: Check GTK theme name
+    try:
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
+            capture_output=True, text=True, timeout=2
+        )
+        if "dark" in result.stdout.lower():
+            return True
+    except Exception:
+        pass
+
+    # Method 4: Check Qt palette (works well for KDE)
+    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtGui import QPalette
+    app = QApplication.instance()
+    if app:
+        palette = app.palette()
+        bg_lightness = palette.color(QPalette.Window).lightness()
+        if bg_lightness < 128:
+            return True
+
+    return False
+
+
 def configure_pyqtgraph(force_no_gpu: bool = False, dark_mode: bool = None):
     pg.setConfigOptions(antialias=True)
 
     # Auto-detect dark mode from system if not specified
     if dark_mode is None:
-        from PyQt5.QtWidgets import QApplication
-        from PyQt5.QtGui import QPalette
-        app = QApplication.instance()
-        if app:
-            palette = app.palette()
-            bg_lightness = palette.color(QPalette.Window).lightness()
-            dark_mode = bg_lightness < 128
-        else:
-            dark_mode = False
+        dark_mode = _detect_dark_mode()
 
     if dark_mode:
         pg.setConfigOption("background", (30, 30, 30))
