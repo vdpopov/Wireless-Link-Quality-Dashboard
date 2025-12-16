@@ -96,7 +96,33 @@ def _detect_dark_mode():
     return False
 
 
+def _apply_dark_palette(app):
+    """Apply dark color palette to Qt application."""
+    from PyQt5.QtGui import QPalette, QColor
+    from PyQt5.QtCore import Qt
+
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(45, 45, 45))
+    palette.setColor(QPalette.WindowText, QColor(208, 208, 208))
+    palette.setColor(QPalette.Base, QColor(30, 30, 30))
+    palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
+    palette.setColor(QPalette.ToolTipBase, QColor(45, 45, 45))
+    palette.setColor(QPalette.ToolTipText, QColor(208, 208, 208))
+    palette.setColor(QPalette.Text, QColor(208, 208, 208))
+    palette.setColor(QPalette.Button, QColor(45, 45, 45))
+    palette.setColor(QPalette.ButtonText, QColor(208, 208, 208))
+    palette.setColor(QPalette.BrightText, QColor(255, 51, 51))
+    palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
+
+    app.setPalette(palette)
+    app.setStyleSheet("QToolTip { color: #d0d0d0; background-color: #2d2d2d; border: 1px solid #3d3d3d; }")
+
+
 def configure_pyqtgraph(force_no_gpu: bool = False, dark_mode: bool = None):
+    from PyQt5.QtWidgets import QApplication
+
     pg.setConfigOptions(antialias=True)
 
     # Auto-detect dark mode from system if not specified
@@ -106,6 +132,10 @@ def configure_pyqtgraph(force_no_gpu: bool = False, dark_mode: bool = None):
     if dark_mode:
         pg.setConfigOption("background", (30, 30, 30))
         pg.setConfigOption("foreground", (200, 200, 200))
+        # Apply dark palette to Qt widgets
+        app = QApplication.instance()
+        if app:
+            _apply_dark_palette(app)
     else:
         pg.setConfigOption("background", "w")
         pg.setConfigOption("foreground", "k")
