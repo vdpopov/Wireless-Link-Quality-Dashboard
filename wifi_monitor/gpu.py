@@ -52,10 +52,27 @@ def detect_gpu_capability():
         return False, "None", f"OpenGL test failed: {str(e)}"
 
 
-def configure_pyqtgraph(force_no_gpu: bool = False):
+def configure_pyqtgraph(force_no_gpu: bool = False, dark_mode: bool = None):
     pg.setConfigOptions(antialias=True)
-    pg.setConfigOption("background", "w")
-    pg.setConfigOption("foreground", "k")
+
+    # Auto-detect dark mode from system if not specified
+    if dark_mode is None:
+        from PyQt5.QtWidgets import QApplication
+        from PyQt5.QtGui import QPalette
+        app = QApplication.instance()
+        if app:
+            palette = app.palette()
+            bg_lightness = palette.color(QPalette.Window).lightness()
+            dark_mode = bg_lightness < 128
+        else:
+            dark_mode = False
+
+    if dark_mode:
+        pg.setConfigOption("background", (30, 30, 30))
+        pg.setConfigOption("foreground", (200, 200, 200))
+    else:
+        pg.setConfigOption("background", "w")
+        pg.setConfigOption("foreground", "k")
 
     if force_no_gpu:
         has_gpu, gpu_name, gpu_reason = False, "None", "disabled by --no-gpu"

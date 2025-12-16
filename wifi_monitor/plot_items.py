@@ -116,7 +116,24 @@ def setup_legend(plot, offset=(5, 5)):
     legend.setParentItem(plot.getPlotItem().vb)
     legend.anchor((0, 0), (0, 0), offset=offset)
 
-    legend.setBrush(pg.mkBrush(255, 255, 255, 180))
+    # Detect dark mode from pyqtgraph background config
+    bg = pg.getConfigOption("background")
+    if isinstance(bg, tuple) and len(bg) >= 3:
+        is_dark = (bg[0] + bg[1] + bg[2]) / 3 < 128
+    elif bg == "k" or bg == "black":
+        is_dark = True
+    else:
+        is_dark = False
+
+    if is_dark:
+        # Dark theme: dark legend background, light text
+        legend.setBrush(pg.mkBrush(50, 50, 50, 200))
+        legend.setLabelTextColor((200, 200, 200))
+    else:
+        # Light theme: light legend background, dark text
+        legend.setBrush(pg.mkBrush(255, 255, 255, 200))
+        legend.setLabelTextColor((0, 0, 0))
+
     legend.setPen(pg.mkPen(None))
 
     legend.layout.setSpacing(3)

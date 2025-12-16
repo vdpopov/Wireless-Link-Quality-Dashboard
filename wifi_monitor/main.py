@@ -26,9 +26,10 @@ def main(argv=None):
     )
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
 
-    antialias_default = configure_pyqtgraph(force_no_gpu=args.no_gpu)
-
+    # Create QApplication first so we can detect system theme
     app = QApplication([sys.argv[0], *qt_args])
+
+    antialias_default = configure_pyqtgraph(force_no_gpu=args.no_gpu)
 
     interfaces = get_wireless_interfaces()
     if not interfaces:
