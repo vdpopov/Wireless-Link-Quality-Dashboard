@@ -4,6 +4,10 @@ A lightweight Linux desktop app that graphs **Wi‑Fi link quality** and **netwo
 
 It continuously samples Wi‑Fi metrics from `iw` and runs background pings to one or more hosts so you can correlate **signal / link rate changes** with **latency spikes** and **packet loss**.
 
+![Live monitoring dashboard](live.png)
+
+![Channel congestion heatmap](heatmap.png)
+
 ## What it shows
 
 - **Signal strength** (dBm)
